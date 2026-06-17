@@ -82,11 +82,18 @@ workspace "Plataforma de Mobilidade" "Modelagem C4 do núcleo de Matching e Prec
 
         stream   -> batch       "Consome eventos"
         batch    -> lake        "Persiste dados curados"
+        lake     -> batch       "Fornece dados históricos para feature engineering"
         batch    -> featoffline "Materializa features de treino"
         batch    -> featonline  "Publica features online (online/offline parity)"
         training -> featoffline "Lê features de treino"
         training -> registry    "Registra modelo validado"
         registry -> serving     "Promove/implanta novo modelo"
+
+        # Relações adicionais para os dynamic views de fluxo
+        geo     -> serving  "Fornece estado de oferta para scoring"
+        serving -> stream   "Publica feedback de predições (aceite/recusa/conclusão)"
+        serving -> training "Monitoramento de drift em produção"
+        batch   -> featureAsm "Mesma lógica de features (feature parity)"
 
         # ===== Relações: Nível 3 (Componentes) - Matching/Dispatch =====
         gateway      -> orchestrator "Solicita corrida"
@@ -136,6 +143,65 @@ workspace "Plataforma de Mobilidade" "Modelagem C4 do núcleo de Matching e Prec
             autolayout lr
         }
 
+        # ── Dynamic View 1: Pipeline de ML (coleta → bifurcação → inferência) ──────
+        dynamic core "PipelineML" "Fluxo de dados: coleta em tempo real → Kafka → bifurcação online/offline → inferência e retroalimentação" {
+            # Coleta
+            motorista  -> gateway  "Envia localização" "HTTPS/WebSocket"
+            passageiro -> gateway  "Solicita corrida e cotação" "HTTPS"
+            gateway    -> ingest   "Telemetria de localização" "gRPC"
+
+            # Bifurcação no backbone
+            ingest -> stream "Publica eventos de localização"
+            ingest -> geo   "Atualiza estado de oferta (caminho quente)"
+
+            # Plano Online — baixa latência
+            geo     -> serving    "Fornece estado de oferta para scoring"
+            serving -> featonline "Lê features online"
+
+            # Plano Offline — Big Data
+            stream -> batch       "Consome eventos (plano offline)"
+            batch  -> lake        "Persiste dados curados"
+            batch  -> featoffline "Materializa features históricas"
+
+            # Ciclo de treinamento e deploy
+            training -> featoffline "Lê features de treino"
+            training -> registry    "Registra modelo validado"
+            batch    -> featonline  "Publica features (online/offline parity)"
+            registry -> serving     "Promove novo modelo para produção"
+
+            # Retroalimentação: decisões voltam ao backbone
+            serving -> stream "Publica feedback (aceite/recusa/conclusão)"
+
+            autolayout lr
+        }
+
+        # ── Dynamic View 2: Arquitetura de Treinamento vs. Inferência ────────────
+        dynamic core "TreinoVsInferencia" "Contraste entre o regime offline de treinamento e o regime online de inferência; feature store e model registry como pontos de integração que evitam training/serving skew" {
+            # ── Regime de Treinamento (Offline / Batch) ──
+            stream      -> batch       "Consome eventos de corrida para feature engineering"
+            lake        -> batch       "Fornece dados históricos para re-treino"
+            batch       -> featoffline "Materializa features históricas"
+            training    -> featoffline "Lê features para treino e validação"
+            training    -> registry    "Registra modelo validado (após métricas OK)"
+
+            # ── Regime de Inferência (Online / Tempo Real) ──
+            passageiro  -> gateway  "Solicita corrida / cotação" "HTTPS"
+            motorista   -> gateway  "Envia localização" "HTTPS/WebSocket"
+            gateway     -> matching "Solicita despacho" "gRPC"
+            matching    -> geo      "Obtém candidatos e contexto de oferta"
+            matching    -> serving  "Pede scores (ETA, cancelamento, compatibilidade)"
+            serving     -> featonline "Lê features online (baixa latência)"
+
+            # ── Pontos de Integração (evitam training/serving skew) ──
+            registry    -> serving    "Deploy: shadow → canary → produção"
+            batch       -> featureAsm "Mesma lógica de features (feature parity)"
+            batch       -> featonline "Parity: publica features online a partir do offline"
+            serving     -> training   "Monitoramento de drift em produção"
+            serving     -> stream     "Retroalimenta histórico via feedback de predições"
+
+            autolayout tb
+        }
+
         styles {
             element "Person" {
                 shape person
@@ -168,6 +234,15 @@ workspace "Plataforma de Mobilidade" "Modelagem C4 do núcleo de Matching e Prec
             element "Component" {
                 background #85bbf0
                 color #000000
+            }
+
+            relationship "Parity" {
+                dashed true
+                color  #888888
+            }
+            relationship "Drift" {
+                dashed true
+                color  #cc6600
             }
         }
     }
