@@ -93,7 +93,7 @@ workspace "Plataforma de Mobilidade" "Modelagem C4 do núcleo de Matching e Prec
         geo     -> serving  "Fornece estado de oferta para scoring"
         serving -> stream   "Publica feedback de predições (aceite/recusa/conclusão)"
         serving -> training "Monitoramento de drift em produção"
-        batch   -> featureAsm "Mesma lógica de features (feature parity)"
+        batch   -> matching "Mesma lógica de features garante parity (feature engineering)"
 
         # ===== Relações: Nível 3 (Componentes) - Matching/Dispatch =====
         gateway      -> orchestrator "Solicita corrida"
@@ -194,7 +194,7 @@ workspace "Plataforma de Mobilidade" "Modelagem C4 do núcleo de Matching e Prec
 
             # ── Pontos de Integração (evitam training/serving skew) ──
             registry    -> serving    "Deploy: shadow → canary → produção"
-            batch       -> featureAsm "Mesma lógica de features (feature parity)"
+            batch       -> matching   "Mesma lógica de features garante parity (feature engineering)"
             batch       -> featonline "Parity: publica features online a partir do offline"
             serving     -> training   "Monitoramento de drift em produção"
             serving     -> stream     "Retroalimenta histórico via feedback de predições"
